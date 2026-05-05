@@ -1,0 +1,291 @@
+# Конфигурация Home Assistant для умного холодильника
+
+Этот файл содержит пример конфигурации для `configuration.yaml` если автоматическое обнаружение не работает или вы хотите добавить дополнительные entities вручную.
+
+## Базовая конфигурация MQTT
+
+```yaml
+mqtt:
+  broker: 192.168.1.XXX  # IP вашего MQTT брокера
+  port: 1883
+  username: ""           # Оставьте пустым если нет аутентификации
+  password: ""           # Оставьте пустым если нет аутентификации
+  
+  # Last Will & Testament будет отправляться автоматически устройством
+  
+  sensor:
+    - name: "Fridge Temperature"
+      unique_id: fridge_temp_main
+      state_topic: "home/fridge/main/temp"
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+      availability_topic: "home/fridge/avail"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["fridge_esp8266"]
+        name: "Холодильник"
+        manufacturer: "DIY"
+        model: "ESP8266+DS18B20"
+        sw_version: "1.0"
+        connections:
+          - ["mac", "XX:XX:XX:XX:XX:XX"]  # Замените на MAC адрес ESP
+    
+    - name: "Freezer Temperature"
+      unique_id: fridge_temp_freezer
+      state_topic: "home/fridge/freezer/temp"
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+      availability_topic: "home/fridge/avail"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["fridge_esp8266"]
+        name: "Холодильник"
+
+  number:
+    - name: "Fridge Target Temp"
+      unique_id: fridge_target_main
+      command_topic: "home/fridge/main/target/set"
+      state_topic: "home/fridge/main/target"
+      min: -10
+      max: 10
+      step: 0.5
+      unit_of_measurement: "°C"
+      mode: box
+      availability_topic: "home/fridge/avail"
+      device:
+        identifiers: ["fridge_esp8266"]
+    
+    - name: "Freezer Target Temp"
+      unique_id: fridge_target_freezer
+      command_topic: "home/fridge/freezer/target/set"
+      state_topic: "home/fridge/freezer/target"
+      min: -30
+      max: -10
+      step: 0.5
+      unit_of_measurement: "°C"
+      mode: box
+      availability_topic: "home/fridge/avail"
+      device:
+        identifiers: ["fridge_esp8266"]
+
+  switch:
+    - name: "Fridge Compressor"
+      unique_id: fridge_compressor
+      command_topic: "home/fridge/compressor/set"
+      state_topic: "home/fridge/compressor/state"
+      availability_topic: "home/fridge/avail"
+      payload_on: "ON"
+      payload_off: "OFF"
+      device:
+        identifiers: ["fridge_esp8266"]
+```
+
+---
+
+## Автоматизации
+
+### Уведомление о повышенной температуре в холодильнике
+
+```yaml
+alias: "🧊 Холодильник - Высокая температура"
+description: "Уведомление если температура в холодильнике выше нормы"
+trigger:
+  - platform: numeric_state
+    entity_id: sensor.fridge_temperature
+    above: 7
+    for:
+      minutes: 10
+condition: []
+action:
+  - service: notify.mobile_app_your_phone
+    data:
+      title: "⚠️ Холодильник"
+      message: "Температура в холодильнике повысилась до {{ states('sensor.fridge_temperature') }}°C"
+      data:
+        push:
+          sound: default
+          category: alert
+mode: single
+```
+
+### Уведомление о разморозке морозилки
+
+```yaml
+alias: "🧊 Морозилка - Критическая температура"
+description: "Уведомление если морозилка начала размораживаться"
+trigger:
+  - platform: numeric_state
+    entity_id: sensor.freezer_temperature
+    above: -12
+    for:
+      minutes: 15
+condition: []
+action:
+  - service: notify.mobile_app_your_phone
+    data:
+      title: "🚨 Морозилка"
+      message: "Критическая температура в морозилке: {{ states('sensor.freezer_temperature') }}°C! Возможна порча продуктов!"
+      data:
+        push:
+          sound: emergency
+          category: alarm
+mode: single
+```
+
+### Уведомление о потере связи с устройством
+
+```yaml
+alias: "📡 Холодильник - Потеря связи"
+description: "Уведомление если устройство офлайн"
+trigger:
+  - platform: state
+    entity_id: binary_sensor.fridge_availability
+    to: "off"
+    for:
+      minutes: 5
+condition: []
+action:
+  - service: notify.mobile_app_your_phone
+    data:
+      title: "📡 Холодильник"
+      message: "Потеряна связь с контроллером холодильника"
+mode: single
+```
+
+---
+
+## Lovelace Dashboard Card
+
+Добавьте в ваш Dashboard через UI Editor или YAML:
+
+```yaml
+type: vertical-stack
+title: 🧊 Холодильник
+cards:
+  - type: entities
+    entities:
+      - entity: sensor.fridge_temperature
+        name: Холодильная камера
+        icon: mdi:fridge
+      - entity: sensor.freezer_temperature
+        name: Морозильная камера
+        icon: mdi:snowflake
+      - type: divider
+      - entity: number.fridge_target_temp
+        name: Целевая темп. (холод.)
+      - entity: number.freezer_target_temp
+        name: Целевая темп. (мороз.)
+      - type: divider
+      - entity: switch.fridge_compressor
+        name: Компрессор
+        icon: mdi:engine
+  
+  - type: history-graph
+    title: История температур (24ч)
+    entities:
+      - entity: sensor.fridge_temperature
+      - entity: sensor.freezer_temperature
+    hours_to_show: 24
+    refresh_interval: 30
+  
+  - type: statistics-graph
+    title: Статистика (7 дней)
+    days_to_show: 7
+    entities:
+      - entity: sensor.fridge_temperature
+      - entity: sensor.freezer_temperature
+    chart_type: line
+    stat_types:
+      - mean
+      - min
+      - max
+```
+
+---
+
+## Binary Sensor для доступности устройства
+
+Для мониторинга онлайн/оффлайн статуса:
+
+```yaml
+binary_sensor:
+  - platform: mqtt
+    name: "Fridge Availability"
+    unique_id: fridge_availability
+    state_topic: "home/fridge/avail"
+    payload_on: "online"
+    payload_off: "offline"
+    device_class: connectivity
+    device:
+      identifiers: ["fridge_esp8266"]
+```
+
+---
+
+## Template Sensor для расчёта разницы температур
+
+```yaml
+template:
+  - sensor:
+      - name: "Fridge Temp Difference"
+        unique_id: fridge_temp_diff
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state: >
+          {% set main = states('sensor.fridge_temperature') | float(default=0) %}
+          {% set freezer = states('sensor.freezer_temperature') | float(default=0) %}
+          {{ (main - freezer) | round(1) }}
+        availability:
+          - entity_id: sensor.fridge_temperature
+          - entity_id: sensor.freezer_temperature
+```
+
+---
+
+## Energy Dashboard (опционально)
+
+Если у вас есть датчик энергопотребления холодильника, можно добавить:
+
+```yaml
+sensor:
+  - platform: mqtt
+    name: "Fridge Power"
+    unique_id: fridge_power
+    state_topic: "home/fridge/power"
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    device:
+      identifiers: ["fridge_esp8266"]
+  
+  - platform: mqtt
+    name: "Fridge Energy"
+    unique_id: fridge_energy
+    state_topic: "home/fridge/energy"
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    device:
+      identifiers: ["fridge_esp8266"]
+```
+
+Затем добавьте эти сенсоры в Energy Dashboard в настройках HA.
+
+---
+
+## Советы по оптимизации
+
+1. **Настройте retention для MQTT топиков** чтобы HA получал последние значения после перезагрузки
+2. **Используйте QoS 1** для критических сообщений (статус компрессора)
+3. **Включите логирование MQTT** для отладки:
+   ```yaml
+   logger:
+     default: warning
+     logs:
+       homeassistant.components.mqtt: debug
+   ```
+4. **Настройте резервное копирование** конфигурации HA регулярно
